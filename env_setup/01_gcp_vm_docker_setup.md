@@ -33,6 +33,8 @@ ref: https://docs.docker.com/engine/install/ubuntu/
     - when the VM is running, simply click the 'SSH' to open up a terminal in browser.
     - sudo su
     - apt update
+      - apt install ubuntu-drivers-common   ### install ubuntu common drivers
+      - ubuntu-drivers devices    ### check GPU is available
     - sudo ubuntu-drivers autoinstall
     - when install finishes, run 'nvidia-smi' to check if it shows akk details of Cuda installed on the VM
   - Step2: Docker Installation: 
