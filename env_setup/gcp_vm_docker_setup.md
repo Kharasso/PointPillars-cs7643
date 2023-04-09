@@ -20,10 +20,10 @@ Steps to set up the development environment on a GPU powered VM instance on Goog
 
 leave the rest of the setting as is. Then click 'CREATE'.
 
-![alt text](/gcp_vm_config1.png)
+![alt text](gcp_vm_config1.png)
 </br>
 </br>
-![alt text](/gcp_vm_config2.png)
+![alt text](gcp_vm_config2.png)
 
 #### 1.2 Docker Installation
 ref: https://medium.com/@kevindanikowski/create-gpu-attached-vm-with-docker-container-on-google-cloud-platform-91dbce469a14
