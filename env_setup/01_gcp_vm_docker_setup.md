@@ -60,6 +60,11 @@ ref: https://docs.docker.com/engine/install/ubuntu/
     - service docker restart
   - Step 4 Login to Docker to Pull Containers: 
     - use the commands in the top answer here: https://stackoverflow.com/questions/59872307/gcp-unable-to-pull-docker-images-from-our-gcp-private-container-registry-on-ubu
+      after download the .gz file:
+      1. mkdir /usr/bin/docker-credential-gcloud
+      2. tar -xvzf ./docker-credential-gcr_linux_amd64-2.0.0.tar.gz -C /usr/bin/docker-credential-gcloud
+      3. sudo chmod +x /usr/bin/docker-credential-gcloud
+      4. gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://gcr.io
 
 #### 1.3 Create GPU Attached Docker Container
   - Step 1: 
