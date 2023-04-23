@@ -14,6 +14,7 @@ class Loss(nn.Module):
         self.dir_w = dir_w
         self.smooth_l1_loss = nn.SmoothL1Loss(reduction='none',
                                               beta=beta)
+        self.mse_loss = nn.MSELoss(reduction='none')
         self.dir_cls = nn.CrossEntropyLoss()
     
     def forward(self,
@@ -49,8 +50,8 @@ class Loss(nn.Module):
         cls_loss = cls_loss.sum() / num_cls_pos
         
         # 2. regression loss
-        #reg_loss = self.smooth_l1_loss(bbox_pred, batched_bbox_reg)
-        #reg_loss = reg_loss.sum() / reg_loss.size(0)
+        # reg_loss = self.smooth_l1_loss(bbox_pred, batched_bbox_reg)
+        # reg_loss = reg_loss.sum() / reg_loss.size(0)
         '''
         pred_points = self.points_from_bbox(bbox_pred)  # (n,8,3)
         gt_points = self.points_from_bbox(batched_bbox_reg)
@@ -72,9 +73,12 @@ class Loss(nn.Module):
         reg_loss = reg_loss.sum()/reg_loss.size(0)
         '''
 
-        reg_loss = self.lossEIOU(bbox_pred, batched_bbox_reg)
+        # reg_loss = self.lossEIOU(bbox_pred, batched_bbox_reg)
         #print(reg_loss.size())  # (n,1)
-        reg_loss = reg_loss.sum()/reg_loss.size(0)
+        # reg_loss = reg_loss.sum()/reg_loss.size(0)
+
+        reg_loss = self.mse_loss(bbox_pred, batched_bbox_reg)
+        reg_loss = reg_loss.sum() / reg_loss.size(0)
         # 3. direction cls loss
         dir_cls_loss = self.dir_cls(bbox_dir_cls_pred, batched_dir_labels)
 
@@ -156,13 +160,13 @@ class Loss(nn.Module):
         gbw = bboxgt[:, 2] - 0.5 * bboxgt[:, 5]
 
         w_intersect = torch.min(pl, gl) + torch.min(pr, gr)
-        g_w_intersect = torch.max(pl, gl) + torch.max(pr, gr)
+        g_w_intersect = torch.min(pl, gl) + torch.max(pr, gr)
 
         l_intersect = torch.min(pt, gt) + torch.min(pb, gb)
-        g_l_intersect = torch.max(pt, gt) + torch.max(pb, gb)
+        g_l_intersect = torch.max(pt, gt) + torch.min(pb, gb)
 
         h_intersect = torch.min(pfw, gfw) + torch.min(pbw, gbw)
-        g_h_intersect = torch.max(pfw, gfw) + torch.max(pbw, gbw)
+        g_h_intersect = torch.max(pfw, gfw) + torch.min(pbw, gbw)
 
         w_union = g_w_intersect + 1e-7
         l_union = g_l_intersect + 1e-7
