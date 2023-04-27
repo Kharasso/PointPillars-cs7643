@@ -2,7 +2,7 @@ import pdb
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from compas import geometry
+# from compas import geometry # require only if using EIOU
 from utils import process
 class Loss(nn.Module):
     def __init__(self, alpha=0.25, gamma=2.0, beta=1/9, cls_w=1.0, reg_w=2.0, dir_w=0.2):
