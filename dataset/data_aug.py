@@ -3,9 +3,59 @@ import numba
 import numpy as np
 import os
 import pdb
+from pcdet.utils.box_utils import boxes_to_corners_3d, remove_points_in_boxes3d
 from utils import bbox3d2bevcorners, box_collision_test, read_points, \
     remove_pts_in_bboxes, limit_period
 
+
+# shape aware dropout
+def octodron_dropout(data_dict, human_more_dropout=True):
+    pts, gt_bboxes_3d, gt_labels  = data_dict['pts'], data_dict['gt_bboxes_3d'], data_dict['gt_labels']
+
+    gt_bbox3d_corner_pts = boxes_to_corners_3d(gt_bboxes_3d)
+
+    # randomly pick for each gt bbox one of the 8 octodrons to dropout
+    idx_octodron = np.random.randint(8, size=gt_bbox3d_corner_pts.shape[0])
+    corners_picked = gt_bbox3d_corner_pts[np.arange(gt_bbox3d_corner_pts.shape[0]), idx_octodron]
+
+    # construct the new centroids and new l, w, h dims of the filtering 3d bboxes
+    # the yaw around z axis remains unchanged
+    new_centers = (gt_bboxes_3d[:, :3] + corners_picked) / 2
+    new_dims = gt_bboxes_3d[:, 3:-1] / 2
+    
+    filter_bboxes = np.hstack((new_centers, new_dims, gt_bboxes_3d[:, -1:]))
+
+    # if dropping out one more octodron adjacent to the already chose ones for human objects (pedestrians/cyclists)
+    # add additional filtering bboxes only for human objects
+    if human_more_dropout:
+        # get the indices for the gt bboxes corresponding to human objects
+        # idx_human = np.where((gt_labels == 0) | (gt_labels == 1))
+        # idx_human = np.where((gt_labels == 2))
+        idx_human = np.where((gt_labels == 0) | (gt_labels == 1) | (gt_labels == 2))
+        # shift the original choice for the octodron chosen for these objects by 1 to construct additional choices
+        # wrap at 8
+        idx_additional_octodron = (idx_octodron[idx_human] + 1) % 8
+
+        # store only those gt bboxes for human objects and the corresponding corner points in new variables
+        gt_bboxes_human = gt_bboxes_3d[idx_human]
+        gt_bboxes_human_corner_pts = gt_bbox3d_corner_pts[idx_human]
+
+        # perform picking of additional corner points (corresponding to the additional octodrons)
+        additional_corners_picked = gt_bboxes_human_corner_pts[np.arange(gt_bboxes_human_corner_pts.shape[0]), idx_additional_octodron]
+
+        # construct the additional filtering bboxes for these human objects - center points, l, w, h dims
+        # the yaw around z axis remains unchanged
+        additional_new_centers = (gt_bboxes_human[:, :3] + additional_corners_picked) / 2
+        additional_new_dims = gt_bboxes_human[:, 3:-1] / 2
+        additional_filter_bboxes = np.hstack((additional_new_centers, additional_new_dims, gt_bboxes_human[:, -1:]))
+
+        # vstack these additional filtering bboxes to the existing ones
+        filter_bboxes = np.vstack((filter_bboxes, additional_filter_bboxes))
+
+    # filter out points in these filtering bboxes
+    data_dict['pts'] = remove_points_in_boxes3d(pts, filter_bboxes)
+
+    return data_dict
 
 def dbsample(CLASSES, data_root, data_dict, db_sampler, sample_groups):
     '''
@@ -305,7 +355,6 @@ def filter_bboxes_with_labels(data_dict, label=-1):
     data_dict.update({'difficulty': difficulty})
     return data_dict
 
-
 def data_augment(CLASSES, data_root, data_dict, data_aug_config):
     '''
     CLASSES: dict(Pedestrian=0, Cyclist=1, Car=2)
@@ -315,6 +364,7 @@ def data_augment(CLASSES, data_root, data_dict, data_aug_config):
     return: data_dict
     '''
 
+
     # 1. sample databases and merge into the data 
     db_sampler_config = data_aug_config['db_sampler']
     data_dict = dbsample(CLASSES,
@@ -322,36 +372,41 @@ def data_augment(CLASSES, data_root, data_dict, data_aug_config):
                          data_dict, 
                          db_sampler=db_sampler_config['db_sampler'],
                          sample_groups=db_sampler_config['sample_groups'])
-    # 2. object noise
+    
+    # 2. apply octodron dropout
+    data_dict = octodron_dropout(data_dict)
+
+
+    # 3. object noise
     object_noise_config = data_aug_config['object_noise']
     data_dict = object_noise(data_dict, 
                              num_try=object_noise_config['num_try'],
                              translation_std=object_noise_config['translation_std'],
                              rot_range=object_noise_config['rot_range'])
     
-    # 3. random flip
+    # 4. random flip
     random_flip_ratio = data_aug_config['random_flip_ratio']
     data_dict = random_flip(data_dict, random_flip_ratio)
 
-    # 4. global rotation, scaling and translation
+    # 5. global rotation, scaling and translation
     global_rot_scale_trans_config = data_aug_config['global_rot_scale_trans']
     rot_range = global_rot_scale_trans_config['rot_range']
     scale_ratio_range = global_rot_scale_trans_config['scale_ratio_range']
     translation_std = global_rot_scale_trans_config['translation_std']
     data_dict = global_rot_scale_trans(data_dict, rot_range, scale_ratio_range, translation_std)
 
-    # 5. points range filter
+    # 6. points range filter
     point_range = data_aug_config['point_range_filter']
     data_dict = point_range_filter(data_dict, point_range)
 
-    # 6. object range filter
+    # # 7. object range filter
     object_range = data_aug_config['object_range_filter']
     data_dict = object_range_filter(data_dict, object_range)
 
-    # 7. points shuffle
+    # 8. points shuffle
     data_dict = points_shuffle(data_dict)
 
-    # # 8. filter bboxes with label=-1
+    # # 9. filter bboxes with label=-1
     # data_dict = filter_bboxes_with_labels(data_dict)
     
     return data_dict
