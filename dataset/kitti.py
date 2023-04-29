@@ -8,7 +8,7 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(BASE))
 
 from utils import read_pickle, read_points, bbox_camera2lidar
-from dataset import point_range_filter, data_augment
+from dataset import point_range_filter, data_augment, polar_stitch, rotate_sample
 
 
 class BaseSampler():
@@ -114,18 +114,83 @@ class Kitti(Dataset):
         annos_location = annos_info['location']
         annos_dimension = annos_info['dimensions']
         rotation_y = annos_info['rotation_y']
+        gt_diffs = annos_info['difficulty']
+
         gt_bboxes = np.concatenate([annos_location, annos_dimension, rotation_y[:, None]], axis=1).astype(np.float32)
         gt_bboxes_3d = bbox_camera2lidar(gt_bboxes, tr_velo_to_cam, r0_rect)
-        gt_labels = [self.CLASSES.get(name, -1) for name in annos_name]
+        gt_labels = np.array([self.CLASSES.get(name, -1) for name in annos_name])
+
+        # polarmix 
+        # info of data to mix in
+        index2 = np.random.randint(len(self.sorted_ids))
+        data2_info = self.data_infos[self.sorted_ids[index2]]
+        calib2_info, annos2_info = data2_info['calib'], data2_info['annos']
+        # points to mix in 
+        velodyne2_path = data2_info['velodyne_path'].replace('velodyne', self.pts_prefix)
+        pts2_path = os.path.join(self.data_root, velodyne2_path)
+        pts2 = read_points(pts2_path)
+        # calib info of data to mix in
+        tr_velo_to_cam2 = calib2_info['Tr_velo_to_cam'].astype(np.float32)
+        r0_rect2 = calib2_info['R0_rect'].astype(np.float32)
+        # annotations 
+        annos2_info = self.remove_dont_care(annos2_info)
+        annos2_name = annos2_info['name']
+        annos2_location = annos2_info['location']
+        annos2_dimension = annos2_info['dimensions']
+        rotation2_y = annos2_info['rotation_y']
+        gt_diffs2 = annos2_info['difficulty']
+
+        # gt info to mix in
+        gt_bboxes2 = np.concatenate([annos2_location, annos2_dimension, rotation2_y[:, None]], axis=1).astype(np.float32)
+        gt_bboxes_3d2 = bbox_camera2lidar(gt_bboxes2, tr_velo_to_cam2, r0_rect2)
+        gt_labels2 = np.array([self.CLASSES.get(name, -1) for name in annos2_name])
+
+        # polarmix swapping azymuth ranges
+        theta1 = (np.random.random() - 2 / 3) * np.pi
+        theta2 = theta1 + np.pi * 2 / 3
+        # polarmix rotation omegas
+        omegas = [np.random.random() * np.pi * 2 / 3, (np.random.random() + 1) * np.pi * 2 / 3]
+        # polarmix - swap
+        # if np.random.random() < 0.5:
+        #     pts, gt_bboxes_3d, gt_labels, annos_name, gt_diffs = polar_stitch(pts, 
+        #                                                                     pts2, 
+        #                                                                     gt_bboxes_3d, 
+        #                                                                     gt_bboxes_3d2, 
+        #                                                                     gt_labels, 
+        #                                                                     gt_labels2, 
+        #                                                                     annos_name, 
+        #                                                                     annos2_name,
+        #                                                                     gt_diffs, 
+        #                                                                     gt_diffs2, 
+        #                                                                     theta1, 
+        #                                                                     theta2)
+            
+        # # polarmix - rotate addition
+        # if np.random.random() < 1.0:
+        #     pts_add, gt_bboxes_3d_add, gt_labels_add, annos_name_add, gt_diffs_add = rotate_sample(pts2, 
+        #                                                                                            gt_bboxes_3d2, 
+        #                                                                                            gt_labels2, 
+        #                                                                                            annos2_name, 
+        #                                                                                            gt_diffs2, 
+        #                                                                                            omegas)
+            
+        #     pts = np.concatenate((pts, pts_add), axis=0)
+        #     gt_bboxes_3d = np.concatenate((gt_bboxes_3d, gt_bboxes_3d_add), axis=0)
+        #     gt_labels = np.concatenate((gt_labels, gt_labels_add), axis=0)
+        #     annos_name = np.concatenate((annos_name, annos_name_add), axis=0)
+        #     gt_diffs = np.concatenate((gt_diffs, gt_diffs_add), axis=0)
+
         data_dict = {
             'pts': pts,
             'gt_bboxes_3d': gt_bboxes_3d,
-            'gt_labels': np.array(gt_labels), 
+            'gt_labels': gt_labels, 
             'gt_names': annos_name,
-            'difficulty': annos_info['difficulty'],
+            'difficulty': gt_diffs,
             'image_info': image_info,
             'calib_info': calib_info
         }
+
+
         if self.split in ['train', 'trainval']:
             data_dict = data_augment(self.CLASSES, self.data_root, data_dict, self.data_aug_config)
         else:

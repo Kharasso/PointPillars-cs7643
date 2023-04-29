@@ -7,9 +7,70 @@ from pcdet.utils.box_utils import boxes_to_corners_3d, remove_points_in_boxes3d
 from utils import bbox3d2bevcorners, box_collision_test, read_points, \
     remove_pts_in_bboxes, limit_period
 
+# swapping for polarmix
+def polar_stitch(pts1, pts2, gt_bboxes_3d1, gt_bboxes_3d2, gt_labels1, gt_labels2, gt_names1, gt_names2, gt_diffs1, gt_diffs2, theta1, theta2):
+    pt_yaw1 = np.arctan2(pts1[:, 1], pts1[:, 0])
+    pt_yaw2 = np.arctan2(pts2[:, 1], pts2[:, 0])
+
+    pt_idx1 = np.where((pt_yaw1 > theta1) & (pt_yaw1 < theta2))
+    pt_idx2 = np.where((pt_yaw2 > theta1) & (pt_yaw2 < theta2))
+
+    pts1_new = np.delete(pts1, pt_idx1, axis=0)
+    pts1_new = np.concatenate((pts1_new, pts2[pt_idx2]))
+
+    bbox_yaw1 = np.arctan2(gt_bboxes_3d1[:, 1], gt_bboxes_3d1[:, 0])
+    bbox_yaw2 = np.arctan2(gt_bboxes_3d2[:, 1], gt_bboxes_3d2[:, 0])
+
+    bbox_idx1 = np.where((bbox_yaw1 > theta1) & (bbox_yaw1 < theta2))
+    bbox_idx2 = np.where((bbox_yaw2 > theta1) & (bbox_yaw2 < theta2))
+
+    gt_bboxes_3d1_new = np.delete(gt_bboxes_3d1, bbox_idx1, axis=0)
+    gt_bboxes_3d1_new = np.concatenate((gt_bboxes_3d1_new, gt_bboxes_3d2[bbox_idx2]))
+
+    gt_labels1_new = np.delete(gt_labels1, bbox_idx1, axis=0)
+    gt_labels1_new = np.concatenate((gt_labels1_new, gt_labels2[bbox_idx2]))
+
+    gt_names1_new = np.delete(gt_names1, bbox_idx1, axis=0)
+    gt_names1_new = np.concatenate((gt_names1_new, gt_names2[bbox_idx2]))
+
+    gt_diffs1_new = np.delete(gt_diffs1, bbox_idx1, axis=0)
+    gt_diffs1_new = np.concatenate((gt_diffs1_new, gt_diffs2[bbox_idx2]))
+
+    if(len(pts1_new) > 0 and len(gt_labels1_new) > 0):
+        return pts1_new, gt_bboxes_3d1_new, gt_labels1_new, gt_names1_new, gt_diffs1_new
+    else:
+        return pts1, gt_bboxes_3d1, gt_labels1, gt_names1, gt_diffs1
+
+# rotating for polarmix
+def rotate_sample(pts, gt_bboxes_3d, gt_labels, annos_name, gt_diffs, omegas):
+    pts_add = [pts]
+    gt_bboxes_3d_add = [gt_bboxes_3d]
+    labels_add = [gt_labels]
+    names_add = [annos_name]
+    diffs_add = [gt_diffs]
+
+    for om in omegas:
+        mat = np.array([[np.cos(om), np.sin(om), 0], [-np.sin(om), np.cos(om), 0], [0, 0, 1]])
+
+        pts_new = np.zeros_like(pts)
+        pts_new[:, :3] = pts[:, :3] @ mat
+        pts_new[:, 3] = pts[:, 3]
+
+        gt_bboxes_3d_new = np.zeros_like(gt_bboxes_3d)
+        gt_bboxes_3d_new[:, :3] = gt_bboxes_3d[:, :3] @ mat
+        gt_bboxes_3d_new[:, 3:] = gt_bboxes_3d[:, 3:]
+
+        pts_add.append(pts_new)
+        gt_bboxes_3d_add.append(gt_bboxes_3d_new)
+        labels_add.append(gt_labels)
+        names_add.append(annos_name)
+        diffs_add.append(gt_diffs)
+
+    return np.concatenate(pts_add, axis=0), np.concatenate(gt_bboxes_3d_add, axis=0), np.concatenate(labels_add, axis=0), np.concatenate(names_add, axis=0), np.concatenate(diffs_add, axis=0)
+
 
 # shape aware dropout
-def octodron_dropout(data_dict, human_more_dropout=True):
+def octodron_dropout(data_dict, human_more_dropout=False, car_more_dropout=True):
     pts, gt_bboxes_3d, gt_labels  = data_dict['pts'], data_dict['gt_bboxes_3d'], data_dict['gt_labels']
 
     gt_bbox3d_corner_pts = boxes_to_corners_3d(gt_bboxes_3d)
@@ -27,27 +88,32 @@ def octodron_dropout(data_dict, human_more_dropout=True):
 
     # if dropping out one more octodron adjacent to the already chose ones for human objects (pedestrians/cyclists)
     # add additional filtering bboxes only for human objects
-    if human_more_dropout:
+    if human_more_dropout or car_more_dropout:
         # get the indices for the gt bboxes corresponding to human objects
         # idx_human = np.where((gt_labels == 0) | (gt_labels == 1))
         # idx_human = np.where((gt_labels == 2))
-        idx_human = np.where((gt_labels == 0) | (gt_labels == 1) | (gt_labels == 2))
+        if human_more_dropout and not car_more_dropout:
+            idx_additional = np.where((gt_labels == 0) | (gt_labels == 1))
+        elif car_more_dropout and not human_more_dropout:
+            idx_additional = np.where((gt_labels == 2))
+        else:
+            idx_additional = np.where((gt_labels == 0) | (gt_labels == 1) | (gt_labels == 2))
         # shift the original choice for the octodron chosen for these objects by 1 to construct additional choices
         # wrap at 8
-        idx_additional_octodron = (idx_octodron[idx_human] + 1) % 8
+        idx_additional_octodron = (idx_octodron[idx_additional] + 1) % 8
 
         # store only those gt bboxes for human objects and the corresponding corner points in new variables
-        gt_bboxes_human = gt_bboxes_3d[idx_human]
-        gt_bboxes_human_corner_pts = gt_bbox3d_corner_pts[idx_human]
+        gt_bboxes_additional = gt_bboxes_3d[idx_additional]
+        gt_bboxes_additional_corner_pts = gt_bbox3d_corner_pts[idx_additional]
 
         # perform picking of additional corner points (corresponding to the additional octodrons)
-        additional_corners_picked = gt_bboxes_human_corner_pts[np.arange(gt_bboxes_human_corner_pts.shape[0]), idx_additional_octodron]
+        additional_corners_picked = gt_bboxes_additional_corner_pts[np.arange(gt_bboxes_additional_corner_pts.shape[0]), idx_additional_octodron]
 
         # construct the additional filtering bboxes for these human objects - center points, l, w, h dims
         # the yaw around z axis remains unchanged
-        additional_new_centers = (gt_bboxes_human[:, :3] + additional_corners_picked) / 2
-        additional_new_dims = gt_bboxes_human[:, 3:-1] / 2
-        additional_filter_bboxes = np.hstack((additional_new_centers, additional_new_dims, gt_bboxes_human[:, -1:]))
+        additional_new_centers = (gt_bboxes_additional[:, :3] + additional_corners_picked) / 2
+        additional_new_dims = gt_bboxes_additional[:, 3:-1] / 2
+        additional_filter_bboxes = np.hstack((additional_new_centers, additional_new_dims, gt_bboxes_additional[:, -1:]))
 
         # vstack these additional filtering bboxes to the existing ones
         filter_bboxes = np.vstack((filter_bboxes, additional_filter_bboxes))
