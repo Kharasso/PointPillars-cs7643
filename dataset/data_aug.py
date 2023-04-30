@@ -3,7 +3,7 @@ import numba
 import numpy as np
 import os
 import pdb
-from pcdet.utils.box_utils import boxes_to_corners_3d, remove_points_in_boxes3d
+from pcdet.utils.box_utils import boxes_to_corners_3d, remove_points_in_boxes3d, remove_points_outside_boxes3d
 from utils import bbox3d2bevcorners, box_collision_test, read_points, \
     remove_pts_in_bboxes, limit_period
 
@@ -36,18 +36,19 @@ def polar_stitch(pts1, pts2, gt_bboxes_3d1, gt_bboxes_3d2, gt_labels1, gt_labels
     gt_diffs1_new = np.delete(gt_diffs1, bbox_idx1, axis=0)
     gt_diffs1_new = np.concatenate((gt_diffs1_new, gt_diffs2[bbox_idx2]))
 
-    if(len(pts1_new) > 0 and len(gt_labels1_new) > 0):
+    if len(pts1_new) > 0 and len(gt_labels1_new) > 0:
         return pts1_new, gt_bboxes_3d1_new, gt_labels1_new, gt_names1_new, gt_diffs1_new
     else:
         return pts1, gt_bboxes_3d1, gt_labels1, gt_names1, gt_diffs1
 
 # rotating for polarmix
 def rotate_sample(pts, gt_bboxes_3d, gt_labels, annos_name, gt_diffs, omegas):
-    pts_add = [pts]
-    gt_bboxes_3d_add = [gt_bboxes_3d]
-    labels_add = [gt_labels]
-    names_add = [annos_name]
-    diffs_add = [gt_diffs]
+    # pts_add = [pts]
+    # gt_bboxes_3d_add = [gt_bboxes_3d]
+    # labels_add = [gt_labels]
+    # names_add = [annos_name]
+    # diffs_add = [gt_diffs]
+    pts = remove_points_outside_boxes3d(pts, gt_bboxes_3d)
 
     for om in omegas:
         mat = np.array([[np.cos(om), np.sin(om), 0], [-np.sin(om), np.cos(om), 0], [0, 0, 1]])
@@ -60,13 +61,14 @@ def rotate_sample(pts, gt_bboxes_3d, gt_labels, annos_name, gt_diffs, omegas):
         gt_bboxes_3d_new[:, :3] = gt_bboxes_3d[:, :3] @ mat
         gt_bboxes_3d_new[:, 3:] = gt_bboxes_3d[:, 3:]
 
-        pts_add.append(pts_new)
-        gt_bboxes_3d_add.append(gt_bboxes_3d_new)
-        labels_add.append(gt_labels)
-        names_add.append(annos_name)
-        diffs_add.append(gt_diffs)
+        # pts_add.append(pts_new)
+        # gt_bboxes_3d_add.append(gt_bboxes_3d_new)
+        # labels_add.append(gt_labels)
+        # names_add.append(annos_name)
+        # diffs_add.append(gt_diffs)
 
-    return np.concatenate(pts_add, axis=0), np.concatenate(gt_bboxes_3d_add, axis=0), np.concatenate(labels_add, axis=0), np.concatenate(names_add, axis=0), np.concatenate(diffs_add, axis=0)
+    # return np.concatenate(pts_add, axis=0), np.concatenate(gt_bboxes_3d_add, axis=0), np.concatenate(labels_add, axis=0), np.concatenate(names_add, axis=0), np.concatenate(diffs_add, axis=0)
+    return pts_new, gt_bboxes_3d_new, gt_labels, annos_name, gt_diffs
 
 
 # shape aware dropout
@@ -122,6 +124,113 @@ def octodron_dropout(data_dict, human_more_dropout=False, car_more_dropout=True)
     data_dict['pts'] = remove_points_in_boxes3d(pts, filter_bboxes)
 
     return data_dict
+
+
+def rotation_3d_in_axis(pts, theta, axis=0):
+    if len(pts.shape) == 2:
+        pts = np.expand_dims(pts, axis=0)
+        
+    rot_sin = np.sin(theta)
+    rot_cos = np.cos(theta)
+    ones = np.ones_like(rot_cos)
+    zeros = np.zeros_like(rot_cos)
+
+    if axis == 1:
+        rot_mat_T = np.stack([[rot_cos, zeros, -rot_sin], [zeros, ones, zeros],
+                              [rot_sin, zeros, rot_cos]])
+    elif axis == 2 or axis == -1:
+        rot_mat_T = np.stack([[rot_cos, -rot_sin, zeros],
+                              [rot_sin, rot_cos, zeros], [zeros, zeros, ones]])
+    elif axis == 0:
+        rot_mat_T = np.stack([[zeros, rot_cos, -rot_sin],
+                              [zeros, rot_sin, rot_cos], [ones, zeros, zeros]])
+    else:
+        raise ValueError("axis should in range")
+
+    return np.einsum('aij,jka->aik', pts, rot_mat_T)
+
+
+def swap_octodrons(data_dict, distance_limit=100, p=1.0):
+
+    pts, gt_bboxes_3d, gt_labels = data_dict['pts'], data_dict['gt_bboxes_3d'], data_dict['gt_labels']
+    gt_box_corners = boxes_to_corners_3d(gt_bboxes_3d)
+
+    for label in range(3):
+        label_idx = list(np.where(gt_labels == label)[0])
+
+        for i in label_idx:
+            # only apply swap when x is smaller than the distance limit
+            if gt_bboxes_3d[i][0] > distance_limit:
+                continue
+
+            # randomly apply swap with a probability of p:
+            if np.random.rand(1) > p:
+                continue
+
+            # remove i from label idx... only swap it once and it does not swap with it self
+            label_idx.remove(i)
+
+            # corner points of the current box
+            cur_box_corner_pts = gt_box_corners[i]
+
+            # find non-empty partition idx for both gt
+            chosen_octodron_idx = -1 
+
+            # vars for further processing. init as empty
+            cur_oct = None
+            target_pts = None
+            target_gt_idx = -1
+
+            while len(label_idx) > 0:
+                target_gt_idx = np.random.choice(label_idx, 1, replace=False)[0]
+                target_box_corner_pts = gt_box_corners[target_gt_idx]
+
+                for idx_octodron in range(8):
+                    target_oct_centers = (gt_bboxes_3d[target_gt_idx][:3] + target_box_corner_pts[idx_octodron]) / 2
+                    target_oct_dims = gt_bboxes_3d[target_gt_idx][3:-1] / 2
+
+                    target_oct = np.hstack((target_oct_centers, target_oct_dims, gt_bboxes_3d[target_gt_idx][-1]))
+                    target_pts = remove_points_outside_boxes3d(pts, target_oct[np.newaxis, :])
+
+                    if len(target_pts) == 0:
+                        continue
+                    
+                    # print(gt_bboxes_3d[i][:3])
+                    cur_oct_centers = (gt_bboxes_3d[i][:3] + cur_box_corner_pts[idx_octodron]) / 2
+                    cur_oct_dims = gt_bboxes_3d[i][3:-1] / 2
+
+                    cur_oct = np.hstack((cur_oct_centers, cur_oct_dims, gt_bboxes_3d[i][-1]))
+                    cur_pts = remove_points_outside_boxes3d(pts, cur_oct[np.newaxis, :])
+
+                    if len(cur_pts) > 0:
+                        chosen_octodron_idx = idx_octodron
+                        break
+                
+                label_idx.remove(target_gt_idx)
+            
+            if chosen_octodron_idx == -1:
+                continue
+
+            target_box_center, target_box_dim, target_box_heading = gt_bboxes_3d[target_gt_idx][:3], gt_bboxes_3d[target_gt_idx][3:-1], gt_bboxes_3d[target_gt_idx][6:7]
+            # transform target octodron points
+            target_pts[:, :3] -= target_box_center
+            target_pts[:, :3] = rotation_3d_in_axis(target_pts[:, :3], -target_box_heading, axis=2)
+            target_pts[:, :3] /= target_box_dim
+
+            # restore target points to the current box
+            cur_box_center, cur_box_dim, cur_box_heading = gt_bboxes_3d[i][:3], gt_bboxes_3d[i][3:-1], gt_bboxes_3d[i][6:7]
+            target_pts[:, :3] *= cur_box_dim
+            target_pts[:, :3] = rotation_3d_in_axis(target_pts[:, :3], cur_box_heading, axis=2)
+            target_pts[:, :3] += cur_box_center
+
+            # swap
+            pts = remove_points_in_boxes3d(pts, cur_oct[np.newaxis, :])
+            pts = np.vstack((pts, target_pts))
+
+    data_dict['pts'] = pts
+
+    return data_dict
+
 
 def dbsample(CLASSES, data_root, data_dict, db_sampler, sample_groups):
     '''
@@ -442,6 +551,8 @@ def data_augment(CLASSES, data_root, data_dict, data_aug_config):
     # 2. apply octodron dropout
     data_dict = octodron_dropout(data_dict)
 
+    # 2 - 1. apply mix and swap
+    data_dict = swap_octodrons(data_dict, distance_limit=100, p=1.0)
 
     # 3. object noise
     object_noise_config = data_aug_config['object_noise']
@@ -455,11 +566,11 @@ def data_augment(CLASSES, data_root, data_dict, data_aug_config):
     data_dict = random_flip(data_dict, random_flip_ratio)
 
     # 5. global rotation, scaling and translation
-    global_rot_scale_trans_config = data_aug_config['global_rot_scale_trans']
-    rot_range = global_rot_scale_trans_config['rot_range']
-    scale_ratio_range = global_rot_scale_trans_config['scale_ratio_range']
-    translation_std = global_rot_scale_trans_config['translation_std']
-    data_dict = global_rot_scale_trans(data_dict, rot_range, scale_ratio_range, translation_std)
+    # global_rot_scale_trans_config = data_aug_config['global_rot_scale_trans']
+    # rot_range = global_rot_scale_trans_config['rot_range']
+    # scale_ratio_range = global_rot_scale_trans_config['scale_ratio_range']
+    # translation_std = global_rot_scale_trans_config['translation_std']
+    # data_dict = global_rot_scale_trans(data_dict, rot_range, scale_ratio_range, translation_std)
 
     # 6. points range filter
     point_range = data_aug_config['point_range_filter']
@@ -469,8 +580,9 @@ def data_augment(CLASSES, data_root, data_dict, data_aug_config):
     object_range = data_aug_config['object_range_filter']
     data_dict = object_range_filter(data_dict, object_range)
 
+
     # 8. points shuffle
-    data_dict = points_shuffle(data_dict)
+    # data_dict = points_shuffle(data_dict)
 
     # # 9. filter bboxes with label=-1
     # data_dict = filter_bboxes_with_labels(data_dict)

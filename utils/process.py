@@ -396,6 +396,32 @@ def remove_pts_in_bboxes(points, bboxes, rm=True):
     return points[~masks]
 
 
+def remove_pts_outside_bboxes(points, bboxes, rm=True):
+    '''
+    points: shape=(N, 3)
+    bboxes: shape=(n, 7)
+    return: shape=(N, n), bool
+    '''
+    # 1. get 6 groups of rectangle vertexs
+    bboxes_corners = bbox3d2corners(bboxes) # (n, 8, 3)
+    bbox_group_rectangle_vertexs = group_rectangle_vertexs(bboxes_corners) # (n, 6, 4, 3)
+
+    # 2. calculate plane equation: ax + by + cd + d = 0
+    group_plane_equation_params = group_plane_equation(bbox_group_rectangle_vertexs)
+
+    # 3. Judge each point inside or outside the bboxes
+    # if point (x0, y0, z0) lies on the direction of normal vector(a, b, c), then ax0 + by0 + cz0 + d > 0.
+    masks = points_in_bboxes(points, group_plane_equation_params) # (N, n)
+
+    if not rm:
+        return masks
+        
+    # 4. remove point insider the bboxes
+    masks = np.any(masks, axis=-1)
+
+    return points[masks]
+
+
 # modified from https://github.com/open-mmlab/mmdetection3d/blob/master/mmdet3d/core/bbox/structures/utils.py#L11
 def limit_period(val, offset=0.5, period=np.pi):
     """

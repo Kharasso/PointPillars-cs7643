@@ -146,10 +146,11 @@ class Kitti(Dataset):
         gt_labels2 = np.array([self.CLASSES.get(name, -1) for name in annos2_name])
 
         # polarmix swapping azymuth ranges
-        theta1 = (np.random.random() - 2 / 3) * np.pi
-        theta2 = theta1 + np.pi * 2 / 3
+        theta1 = (np.random.random() - 1) * np.pi
+        theta2 = theta1 + np.pi * 1
         # polarmix rotation omegas
-        omegas = [np.random.random() * np.pi * 2 / 3, (np.random.random() + 1) * np.pi * 2 / 3]
+        # omegas = [np.random.random() * np.pi * 2 / 3, (np.random.random() + 1) * np.pi * 2 / 3]
+        omegas = [np.random.random() * np.pi * 2 / 3]
         # polarmix - swap
         # if np.random.random() < 0.5:
         #     pts, gt_bboxes_3d, gt_labels, annos_name, gt_diffs = polar_stitch(pts, 

@@ -131,6 +131,21 @@ def remove_points_in_boxes3d(points, boxes3d):
     return points.numpy() if is_numpy else points
 
 
+def remove_points_outside_boxes3d(points, boxes3d):
+    """
+    Args:
+        points: (num_points, 3 + C)
+        boxes3d: (N, 7) [x, y, z, dx, dy, dz, heading], (x, y, z) is the box center, each box DO NOT overlaps
+    Returns:
+    """
+    boxes3d, is_numpy = common_utils.check_numpy_to_torch(boxes3d)
+    points, is_numpy = common_utils.check_numpy_to_torch(points)
+    point_masks = roiaware_pool3d_utils.points_in_boxes_cpu(points[:, 0:3], boxes3d)
+    points = points[point_masks.sum(dim=0) != 0]
+
+    return points.numpy() if is_numpy else points
+
+
 def boxes3d_kitti_camera_to_lidar(boxes3d_camera, calib):
     """
     Args:
