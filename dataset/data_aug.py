@@ -72,7 +72,7 @@ def rotate_sample(pts, gt_bboxes_3d, gt_labels, annos_name, gt_diffs, omegas):
 
 
 # shape aware dropout
-def octodron_dropout(data_dict, human_more_dropout=False, car_more_dropout=True):
+def partition_dropout(data_dict, human_more_dropout=False, car_more_dropout=True):
     pts, gt_bboxes_3d, gt_labels  = data_dict['pts'], data_dict['gt_bboxes_3d'], data_dict['gt_labels']
 
     gt_bbox3d_corner_pts = boxes_to_corners_3d(gt_bboxes_3d)
@@ -551,10 +551,10 @@ def data_augment(CLASSES, data_root, data_dict, data_aug_config):
                          sample_groups=db_sampler_config['sample_groups'])
     
     # 2. apply octodron dropout
-    # data_dict = octodron_dropout(data_dict)
+    data_dict = partition_dropout(data_dict)
 
     # 2 - 1. apply mix and swap
-    # data_dict = swap_octodrons(data_dict, distance_limit=100, p=1.0)
+    data_dict = swap_octodrons(data_dict, distance_limit=100, p=1.0)
 
     # 3. object noise
     object_noise_config = data_aug_config['object_noise']
@@ -568,11 +568,11 @@ def data_augment(CLASSES, data_root, data_dict, data_aug_config):
     data_dict = random_flip(data_dict, random_flip_ratio)
 
     # 5. global rotation, scaling and translation
-    global_rot_scale_trans_config = data_aug_config['global_rot_scale_trans']
-    rot_range = global_rot_scale_trans_config['rot_range']
-    scale_ratio_range = global_rot_scale_trans_config['scale_ratio_range']
-    translation_std = global_rot_scale_trans_config['translation_std']
-    data_dict = global_rot_scale_trans(data_dict, rot_range, scale_ratio_range, translation_std)
+    # global_rot_scale_trans_config = data_aug_config['global_rot_scale_trans']
+    # rot_range = global_rot_scale_trans_config['rot_range']
+    # scale_ratio_range = global_rot_scale_trans_config['scale_ratio_range']
+    # translation_std = global_rot_scale_trans_config['translation_std']
+    # data_dict = global_rot_scale_trans(data_dict, rot_range, scale_ratio_range, translation_std)
 
     # 6. points range filter
     point_range = data_aug_config['point_range_filter']
@@ -584,7 +584,7 @@ def data_augment(CLASSES, data_root, data_dict, data_aug_config):
 
 
     # 8. points shuffle
-    data_dict = points_shuffle(data_dict)
+    # data_dict = points_shuffle(data_dict)
 
     # # 9. filter bboxes with label=-1
     # data_dict = filter_bboxes_with_labels(data_dict)
