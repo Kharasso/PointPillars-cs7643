@@ -541,7 +541,6 @@ def data_augment(CLASSES, data_root, data_dict, data_aug_config):
     return: data_dict 
     '''
 
-
     # 1. sample databases and merge into the data 
     db_sampler_config = data_aug_config['db_sampler']
     data_dict = dbsample(CLASSES,
